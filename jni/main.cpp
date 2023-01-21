@@ -77,38 +77,31 @@ int check_is_dex(pid_t pid, size_t offset, const char* buf)
     struct iovec local[1];
     ssize_t nread;
 
-#define fatal(fmt, args...) do {printf(fmt, ##args); goto ERR_EXIT;} while(0)
-
     snprintf(path, sizeof(path), "/proc/%d/mem", pid);
 
     fd = open(path, O_RDWR);
-    if(fd < 0) 
-        fatal("[-] open:[%s], errno:[%s]\n", path, strerror(errno));
+    if(fd < 0) {
+        printf("[-] open:[%s], errno:[%s]\n", path, strerror(errno));
+        return -1;
+    }
 
-    //ret = pread(fd, &header, sizeof(DexHeader), offset);
     local[0].iov_base = &header;
     local[0].iov_len = sizeof(DexHeader);
     remote[0].iov_base = (void *)offset;
     remote[0].iov_len = sizeof(DexHeader);
     ret = process_vm_readv(pid, local, 1, remote, 1, 0);
-    if(ret < 0) 
-        fatal("[-] process_vm_readv:[%d], errno:[%s], offset:[%p]\n", ret, strerror(errno), (void*)offset);
-    
-    if(header.headerSize == 0x70){
-        puts(buf);
-        puts((char*)header.magic);
+    if(ret < 0) {
+        //printf("[-] process_vm_readv:[%d], errno:[%s], offset:[%p]\n", ret, strerror(errno), (void*)offset);
+        close(fd);
+        return -1;
     }
-    // printf("ret:%d\n", ret);
-    // puts((char*)header.magic);
-
     
-#undef fatal
+    if(header.headerSize == 0x70 && header.endianTag == 0x12345678){
+        puts(buf);
+    }
+    
     close(fd);
     return 0;
-
-ERR_EXIT:
-    close(fd);
-    return -1;  
 }
 
 
@@ -120,13 +113,13 @@ int dump_dex(pid_t pid)
     char perm[5];
     void* base_addr = NULL;
 
-#define fatal(fmt, args...) do {printf(fmt, ##args); goto ERR_EXIT;} while(0)
-
     snprintf(path, sizeof(path), "/proc/%d/maps", pid);
 
     fp = fopen(path, "r");
-    if(NULL == fp) 
-        fatal("[-] fopen:[%s], errno:[%s]\n", path, strerror(errno));
+    if(NULL == fp){
+        printf("[-] fopen:[%s], errno:[%s]\n", path, strerror(errno));
+        return -1;
+    }
 
     //遍历maps
     while(fgets(buff, sizeof(buff), fp)){
@@ -135,15 +128,9 @@ int dump_dex(pid_t pid)
         check_is_dex(pid, (size_t)base_addr, buff);
     }
 
-#undef fatal
     if(NULL != fp) 
         fclose(fp);
     return 0;
-
-ERR_EXIT:
-    if(NULL != fp) 
-        fclose(fp);
-    return -1;  
 }
 
 
