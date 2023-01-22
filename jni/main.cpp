@@ -6,6 +6,7 @@
 #include <string>
 #include <sys/uio.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 
 #include <android/log.h>
 
@@ -24,13 +25,14 @@
 #endif // INJECT_DEBUG
 
 
-typedef uint8_t  u1;
+typedef uint8_t   u1;
 typedef uint16_t  u2;
 typedef uint32_t  u4;
 typedef uint64_t  u8;
 
 #define MAX_LENGTH 260
 #define DEX_MAGIC  "dex\n035\0"
+#define ODEX_MAGIC  "dex\n037\0"
 #define kSHA1DigestLen  20
 
 struct DexHeader {
@@ -60,6 +62,20 @@ struct DexHeader {
 };
 
 
+static int SDK_INT = -1;
+
+static int get_sdk_level()
+{
+    char sdk[MAX_LENGTH] = {0};
+    if (SDK_INT > 0) {
+        return SDK_INT;
+    }
+    __system_property_get("ro.build.version.sdk", sdk);
+    SDK_INT = atoi(sdk);
+    return SDK_INT;
+}
+
+
 void show_help()
 {
     puts("usage: dumpDex -d pid");
@@ -71,36 +87,83 @@ int check_is_dex(pid_t pid, size_t offset, const char* buf)
 {
     int fd = -1;
     int ret = -1;
+    int dex_size = 0;
     char path[MAX_LENGTH] = {0};
     struct DexHeader header = {0};
     struct iovec remote[1];
     struct iovec local[1];
-    ssize_t nread;
+    char* dex_mem = nullptr;
 
     snprintf(path, sizeof(path), "/proc/%d/mem", pid);
-
-    fd = open(path, O_RDWR);
-    if(fd < 0) {
-        printf("[-] open:[%s], errno:[%s]\n", path, strerror(errno));
+    get_sdk_level();
+    if(SDK_INT >= 23){
+        local[0].iov_base = &header;
+        local[0].iov_len = sizeof(DexHeader);
+        remote[0].iov_base = (void *)offset;
+        remote[0].iov_len = sizeof(DexHeader);
+        ret = process_vm_readv(pid, local, 1, remote, 1, 0);
+        if(ret < 0) {
+            //printf("[-] process_vm_readv errno:[%s], offset:[%p]\n", strerror(errno), (void*)offset);
+            return -1;
+        }
+    }else{
+        printf("sdk < 23 \n");
         return -1;
     }
 
-    local[0].iov_base = &header;
-    local[0].iov_len = sizeof(DexHeader);
-    remote[0].iov_base = (void *)offset;
-    remote[0].iov_len = sizeof(DexHeader);
-    ret = process_vm_readv(pid, local, 1, remote, 1, 0);
-    if(ret < 0) {
-        //printf("[-] process_vm_readv:[%d], errno:[%s], offset:[%p]\n", ret, strerror(errno), (void*)offset);
-        close(fd);
-        return -1;
-    }
-    
     if(header.headerSize == 0x70 && header.endianTag == 0x12345678){
-        puts(buf);
+        if(strcmp((char*)header.magic, ODEX_MAGIC) == 0){
+            return -1;
+        }
+        //puts(buf);
+        //start dump
+        dex_size = header.fileSize;
+        dex_mem = (char*)malloc(dex_size);
+        if(dex_mem == nullptr){
+            return -1;
+        }
+        local[0].iov_base = dex_mem;
+        local[0].iov_len = dex_size;
+        remote[0].iov_base = (void *)offset;
+        remote[0].iov_len = dex_size;
+        ret = process_vm_readv(pid, local, 1, remote, 1, 0);
+        if(ret < 0) {
+            printf("[-] dump_dex->process_vm_readv errno:[%s], offset:[%p]\n", strerror(errno), (void*)offset);
+            if(dex_mem != nullptr){
+                free(dex_mem);
+            }
+            return -1;
+        }
+
+        //mkdir
+        memset(path, 0 , sizeof(path));
+        snprintf(path, sizeof(path), "/data/local/tmp/%d", pid);
+        if (mkdir(path, 0777) < 0 && errno != EEXIST) {
+            printf("[-] mkdir errno:[%s]\n", strerror(errno));
+            if(dex_mem != nullptr){
+                free(dex_mem);
+            }
+            return -1;
+        }
+
+        //write
+        memset(path, 0 , sizeof(path));
+        snprintf(path, sizeof(path), "/data/local/tmp/%d/%d_%d.dex", pid, pid, dex_size);
+        fd = open(path, O_WRONLY | O_CREAT, 0777);
+        if(fd < 0){
+            printf("[-] open errno:[%s]\n", strerror(errno));
+            if(dex_mem != nullptr){
+                free(dex_mem);
+            }
+            return -1;   
+        }
+        write(fd, dex_mem, dex_size);
+        close(fd);
+        free(dex_mem);
+
+        printf("[+] write %s ok\n", path);
     }
     
-    close(fd);
     return 0;
 }
 
@@ -116,19 +179,18 @@ int dump_dex(pid_t pid)
     snprintf(path, sizeof(path), "/proc/%d/maps", pid);
 
     fp = fopen(path, "r");
-    if(NULL == fp){
+    if(fp == NULL){
         printf("[-] fopen:[%s], errno:[%s]\n", path, strerror(errno));
         return -1;
     }
 
-    //遍历maps
     while(fgets(buff, sizeof(buff), fp)){
         if(sscanf(buff, "%p-%*p %4s", &base_addr, perm) != 2) 
             continue;
         check_is_dex(pid, (size_t)base_addr, buff);
     }
 
-    if(NULL != fp) 
+    if(fp != NULL) 
         fclose(fp);
     return 0;
 }
