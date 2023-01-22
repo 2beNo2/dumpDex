@@ -8,23 +8,6 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-#include <android/log.h>
-
-#define TAG "DUMP_DEX"
-#define INJECT_DEBUG 1
-#ifdef INJECT_DEBUG
-#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
-#define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  TAG, __VA_ARGS__)
-#else
-#define LOGD(...)
-#define LOGI(...)
-#define LOGE(...)
-#define LOGW(...)
-#endif // INJECT_DEBUG
-
-
 typedef uint8_t   u1;
 typedef uint16_t  u2;
 typedef uint32_t  u4;
